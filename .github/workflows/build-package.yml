@@ -1,0 +1,77 @@
+name: Build package to Julia
+
+on:
+  push:
+
+jobs:
+  download_releases:
+    runs-on: ubuntu-latest
+    steps:
+      - name: download release asset from deterministicGaussianSampling
+        uses: robinraju/release-downloader@v1
+        with:
+          repository: "KIT-ISAS/deterministicGaussianSampling"
+          latest: true
+          fileName: "*.zip"
+          out-file-path: "deterministicGaussianSamplingLibs"
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: upload downloaded libs as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deterministicGaussianSampling-libs
+          path: deterministicGaussianSamplingLibs
+
+  test:
+    needs: download_releases
+    strategy:
+      matrix:
+        os: [
+            windows-2025,
+            windows-2022,
+            windows-2019,
+            ubuntu-24.04,
+            ubuntu-22.04,
+          ] #, macos-14, macos-14-large, macos-15, macos-26]
+        julia-version: ["1.9", "1.10", "1.11"]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Julia ${{ matrix.julia-version }}
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.julia-version }}
+
+      - name: get deterministicGaussianSampling libs
+        uses: actions/download-artifact@v4
+        with:
+          name: deterministicGaussianSampling-libs
+          path: external_libs
+
+      - name: extract ZIP on Unix
+        if: ${{ runner.os == 'Linux' }}
+        run: |
+          mkdir -p external_libs_unpacked/linux
+          unzip external_libs/linux.zip -d external_libs_unpacked/linux
+          mkdir -p lib/linux/bin
+          cp -r external_libs_unpacked/linux/lib/* lib/linux/bin
+
+      - name: extract ZIP on Windows
+        if: ${{ runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path external_libs_unpacked\windows -Force
+          Expand-Archive -Path external_libs/windows.zip -DestinationPath external_libs_unpacked\windows -Force
+          New-Item -ItemType Directory -Path lib\windows\bin -Force
+          Copy-Item external_libs_unpacked\windows\bin\* lib\windows\bin -Recurse -Force
+
+      - name: Instantiate Julia environment
+        run: |
+          julia --project=. -e 'using Pkg; Pkg.instantiate()'
+
+      - name: Run Julia tests
+        run: |
+          julia --project=. -e 'using Pkg; Pkg.test()'
